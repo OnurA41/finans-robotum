@@ -62,3 +62,40 @@ Lütfen yatırımcıya şu 3 başlıkta kısa, net ve profesyonel bir analiz rap
 
 response = ai_model.generate_content(istem)
 mesaj_gonder(f"🤖 *GÜNLÜK OTOMATİK FİNANSAL ANALİST RAPORU*\n\n{response.text}")
+
+import xml.etree.ElementTree as ET
+
+def kap_bilanco_kontrol():
+    # KAP'ın genel RSS bildirim akışını kontrol eder
+    kap_rss_url = "https://www.kap.org.tr/tr/rss"
+    try:
+        response = requests.get(kap_rss_url, timeout=10)
+        if response.status_code == 200:
+            root = ET.fromstring(response.content)
+            
+            # Portföyümüzdeki hisse kodları
+            takipteki_hisseler = ["ATATP", "YEOTK", "ARDYZ", "SDTTR", "CWENE", "ASELS", "BIMAS", "MPARK", "LOGO", "TUPRS"]
+            
+            for item in root.findall('.//item'):
+                baslik = item.find('title').text if item.find('title') is not None else ""
+                link = item.find('link').text if item.find('link') is not None else ""
+                
+                # Eğer bildirim takip ettiğimiz hisselerden biriyle ilgiliyse ve Finansal Rapor içeriyorsa
+                for hisse in takipteki_hisseler:
+                    if hisse in baslik and ("Finansal Rapor" in baslik or "Bilanço" in baslik):
+                        
+                        # Gemini AI'a Bilanço Yorumlatma
+                        kap_istem = f"""
+                        Aşağıdaki KAP haber başlığı takip ettiğimiz bir şirkete aittir:
+                        Başlık: {baslik}
+                        Link: {link}
+                        
+                        Bu bildirim için yatırımcıya Telegram formatında kısa, heyecan verici bir Bilanço Açıklandı Uyarısı hazırla.
+                        """
+                        ai_kap_yaniti = ai_model.generate_content(kap_istem)
+                        mesaj_gonder(f"🚨 *YENİ KAP BİLANÇO BİLDİRİMİ*\n\n{ai_kap_yaniti.text}\n\n🔗 [KAP Bildirimi Detayı]({link})")
+    except Exception as e:
+        print(f"KAP kontrolü sırasında hata: {e}")
+
+# Kodun en sonuna KAP kontrol fonksiyonunu çağırıyoruz:
+kap_bilanco_kontrol()
