@@ -2,7 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-# Sayfa Tasarımı ve Başlık
+# Sayfa Tasarımı
 st.set_page_config(page_title="Kişisel Finans Merkezim", page_icon="📈", layout="wide")
 st.title("📈 Kişisel Finans ve Portföy Takip Paneli")
 
@@ -24,7 +24,18 @@ sanal_portfoyler = {
     ]
 }
 
-# Sekme Yapısı
+# Yahoo Engeline Takılmamak İçin Veri Önbellekleme (5 Dakikada Bir Yenilenir)
+@st.cache_data(ttl=300)
+def hisse_fiyati_getir(hisse_kodu):
+    try:
+        t = yf.Ticker(hisse_kodu)
+        hist = t.history(period="5d")
+        if not hist.empty and 'Close' in hist.columns:
+            return float(hist['Close'].iloc[-1])
+    except Exception:
+        pass
+    return None
+
 sekmeler = st.tabs(list(sanal_portfoyler.keys()))
 
 for i, (portfoy_adi, hisseler) in enumerate(sanal_portfoyler.items()):
@@ -33,36 +44,31 @@ for i, (portfoy_adi, hisseler) in enumerate(sanal_portfoyler.items()):
         
         veri_listesi = []
         for h in hisseler:
-            try:
-                ticker = yf.Ticker(h["kod"])
-                fiyat = ticker.history(period="1d")["Close"].iloc[-1]
+            fiyat = hisse_fiyati_getir(h["kod"])
+            
+            if fiyat is not None:
                 maliyet = h["maliyet"]
                 kar_zarar_yuzde = ((fiyat - maliyet) / maliyet) * 100
-                fk = ticker.info.get('trailingPE', 'N/A')
-                pddd = ticker.info.get('priceToBook', 'N/A')
                 
                 veri_listesi.append({
                     "Hisse": h["isim"],
                     "Güncel Fiyat (TL)": round(fiyat, 2),
                     "Maliyet (TL)": maliyet,
-                    "Kar/Zarar (%)": round(kar_zarar_yuzde, 2),
-                    "F/K": fk,
-                    "PD/DD": pddd
+                    "Kar/Zarar (%)": round(kar_zarar_yuzde, 2)
                 })
-            except:
-                st.warning(f"{h['isim']} verisi çekilemedi.")
+            else:
+                st.warning(f"⚠️ {h['isim']} verisi şu an alınamıyor (Yahoo geçici sınır koydu).")
                 
         df = pd.DataFrame(veri_listesi)
         
-        # Ekran Göstergeleri (Metrik Kartları)
-        col1, col2 = st.columns(2)
-        toplam_getiri = df["Kar/Zarar (%)"].mean() if not df.empty else 0
-        col1.metric("Portföy Ortalama Getirisi", f"%{toplam_getiri:.2f}")
-        col2.metric("Takip Edilen Hisse Sayısı", len(df))
-        
-        # Tablo
-        st.dataframe(df, use_container_width=True)
-        
-        # Kar/Zarar Grafiği
         if not df.empty:
+            col1, col2 = st.columns(2)
+            toplam_getiri = df["Kar/Zarar (%)"].mean()
+            col1.metric("Portföy Ortalama Getirisi", f"%{toplam_getiri:.2f}")
+            col2.metric("Takip Edilen Hisse Sayısı", len(df))
+            
+            # Tablo
+            st.dataframe(df, use_container_width=True)
+            
+            # Kar/Zarar Grafiği
             st.bar_chart(df.set_index("Hisse")["Kar/Zarar (%)"])
