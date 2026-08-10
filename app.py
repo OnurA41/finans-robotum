@@ -3,9 +3,10 @@ import yfinance as yf
 import pandas as pd
 import json
 import os
+import requests
 
 st.set_page_config(page_title="Katılım Finans Yönetimi", page_icon="🕌", layout="wide")
-st.title("🕌 Katılım Portföy & Analiz Merkezi")
+st.title("🕌 Katılım Portföy & Canlı Fiyat Takip Merkezi")
 
 JSON_DOSYASI = "portfoyler.json"
 
@@ -40,37 +41,80 @@ def portfoyleri_kaydet(veri):
 
 portfoyler = portfoyleri_yukle()
 
-@st.cache_data(ttl=300)
-def hisse_fiyati_getir(hisse_kodu):
+# BIST HISSELERI İÇİN CANLI / SON AN FİYATI ÇEKME
+@st.cache_data(ttl=60)  # 1 dakikada bir canlı günceller
+def bist_fiyati_getir(hisse_kodu):
     try:
         kod = hisse_kodu.upper().strip()
-        if not kod.endswith(".IS") and len(kod) <= 6 and kod not in KATILIM_FON_HAVUZU:
+        if not kod.endswith(".IS"):
             kod = f"{kod}.IS"
         t = yf.Ticker(kod)
-        hist = t.history(period="5d")
+        
+        # Önce anlık hızlı fiyatı dene
+        anlik_fiyat = t.fast_info.get('lastPrice', None)
+        if anlik_fiyat and not pd.isna(anlik_fiyat):
+            return float(anlik_fiyat)
+            
+        # Başarısız olursa son 1 günlük son mum fiyatını çek
+        hist = t.history(period="1d", interval="1m")
         if not hist.empty and 'Close' in hist.columns:
             return float(hist['Close'].iloc[-1])
+            
+        # O da olmazsa 5 günlük kapanışı al
+        hist5 = t.history(period="5d")
+        if not hist5.empty and 'Close' in hist5.columns:
+            return float(hist5['Close'].iloc[-1])
     except Exception:
         pass
     return None
 
+# TEFAS FONLARI İÇİN SON EN GÜNCEL FİYATI ÇEKME
+@st.cache_data(ttl=300)  # 5 dakikada bir önbellekler
+def tefas_fon_fiyati_getir(fon_kodu):
+    try:
+        url = "https://www.tefas.gov.tr/api/DB/BindHistoryInfo"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "X-Requested-With": "XMLHttpRequest"
+        }
+        payload = {"FONTIP": "YAT", "FONKODU": fon_kodu.upper()}
+        res = requests.post(url, data=payload, headers=headers, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            if "data" in data and len(data["data"]) > 0:
+                son_fiyat = data["data"][0]["BİRİM FİYAT"]
+                return float(str(son_fiyat).replace(",", "."))
+    except Exception:
+        pass
+    return None
+
+def genel_fiyat_getir(v_kodu, v_tipi):
+    if "Fon" in v_tipi or v_kodu in KATILIM_FON_HAVUZU:
+        fiyat = tefas_fon_fiyati_getir(v_kodu)
+        if fiyat is not None:
+            return fiyat, "TEFAS Resmi Fiyatı"
+    
+    # Hisse veya Genel Sorgu
+    fiyat = bist_fiyati_getir(v_kodu)
+    if fiyat is not None:
+        return fiyat, "BIST Anlık/Son Kapanış"
+    
+    return None, "Veri Alınamadı"
+
 # YAN MENÜ
 st.sidebar.header("⚙️ Portföy Yönetim Paneli")
 
-# TEK TIKLA KATILIM PORTFÖYÜ YÜKLEME BUTONU
-if st.sidebar.button("🚀 Katılım Hisselerini Otomatik Yükle"):
+if st.sidebar.button("🚀 Örnek Katılım Portföyünü Yükle"):
     ornek_portfoy = [
-        {"kod": "ASELS.IS", "isim": "ASELS", "maliyet": 65.0, "stop_loss": -0.10, "tp1": 0.30, "tip": "Hisse (BIST)"},
-        {"kod": "BIMAS.IS", "isim": "BIMAS", "maliyet": 480.0, "stop_loss": -0.08, "tp1": 0.25, "tip": "Hisse (BIST)"},
-        {"kod": "ATATP.IS", "isim": "ATATP", "maliyet": 80.0, "stop_loss": -0.12, "tp1": 0.40, "tip": "Hisse (BIST)"},
-        {"kod": "YEOTK.IS", "isim": "YEOTK", "maliyet": 200.0, "stop_loss": -0.15, "tp1": 0.40, "tip": "Hisse (BIST)"},
-        {"kod": "LOGO.IS",  "isim": "LOGO",  "maliyet": 100.0, "stop_loss": -0.08, "tp1": 0.30, "tip": "Hisse (BIST)"},
-        {"kod": "ARDYZ.IS", "isim": "ARDYZ", "maliyet": 45.0,  "stop_loss": -0.10, "tp1": 0.35, "tip": "Hisse (BIST)"},
-        {"kod": "SDTTR.IS", "isim": "SDTTR", "maliyet": 280.0, "stop_loss": -0.12, "tp1": 0.40, "tip": "Hisse (BIST)"}
+        {"kod": "ASELS.IS", "isim": "ASELS", "maliyet": 65.0, "stop_loss": -0.10, "tp1": 0.30, "tip": "Katılım Hissesi"},
+        {"kod": "BIMAS.IS", "isim": "BIMAS", "maliyet": 480.0, "stop_loss": -0.08, "tp1": 0.25, "tip": "Katılım Hissesi"},
+        {"kod": "ATATP.IS", "isim": "ATATP", "maliyet": 80.0, "stop_loss": -0.12, "tp1": 0.40, "tip": "Katılım Hissesi"},
+        {"kod": "KFA",      "isim": "KFA",   "maliyet": 2.50, "stop_loss": -0.05, "tp1": 0.20, "tip": "Katılım Fonu"},
+        {"kod": "ZKP",      "isim": "ZKP",   "maliyet": 1.80, "stop_loss": -0.05, "tp1": 0.20, "tip": "Katılım Fonu"}
     ]
     portfoyler["Ana Katılım Portföyü"] = ornek_portfoy
     portfoyleri_kaydet(portfoyler)
-    st.sidebar.success("Katılım hisseleri başarıyla yüklendi!")
+    st.sidebar.success("Örnek portföy başarıyla yüklendi!")
     st.rerun()
 
 st.sidebar.markdown("---")
@@ -95,13 +139,13 @@ elif v_tipi == "Katılım Fonu":
 else:
     varlik_kodu = st.sidebar.text_input("Hisse/Fon Kodu Girin:").upper()
 
-maliyet = st.sidebar.number_input("Alış Maliyeti (TL):", min_value=0.01, value=100.0, step=1.0)
+maliyet = st.sidebar.number_input("Alış Maliyeti (TL):", min_value=0.001, value=100.0, step=1.0, format="%.3f")
 stop_l = st.sidebar.number_input("Stop-Loss Limiti (%):", min_value=-50.0, max_value=0.0, value=-10.0)
 tp_l = st.sidebar.number_input("Kâr Alma Limiti (%):", min_value=0.0, max_value=500.0, value=30.0)
 
 if st.sidebar.button("💾 Portföye Ekle"):
     if varlik_kodu:
-        kod_format = f"{varlik_kodu}.IS" if v_tipi == "Katılım Hissesi" or (v_tipi == "Manuel Kod Gir" and not varlik_kodu.endswith(".IS")) else varlik_kodu
+        kod_format = f"{varlik_kodu}.IS" if v_tipi == "Katılım Hissesi" else varlik_kodu
         yeni_v = {
             "kod": kod_format,
             "isim": varlik_kodu,
@@ -129,30 +173,34 @@ if portfoyler:
                 st.rerun()
 
             if not varliklar:
-                st.warning("⚠️ Bu portföy şu an boş. Sol taraftaki '🚀 Katılım Hisselerini Otomatik Yükle' butonuna basarak veya sol menüden hisse seçerek doldurabilirsiniz.")
+                st.warning("⚠️ Bu portföy şu an boş. Sol menüden hisse veya fon ekleyebilirsiniz.")
             else:
                 tablo = []
                 for v in varliklar:
-                    fiyat = hisse_fiyati_getir(v["kod"])
+                    fiyat, veri_durumu = genel_fiyat_getir(v["isim"], v.get("tip", "Hisse"))
                     if fiyat:
                         m = v["maliyet"]
                         g = ((fiyat - m) / m) * 100
                         tablo.append({
+                            "Tip": v.get("tip", "Hisse"),
                             "Kod": v["isim"],
                             "Maliyet (TL)": m,
-                            "Güncel Fiyat (TL)": round(fiyat, 2),
+                            "Son Fiyat (TL)": round(fiyat, 3 if "Fon" in v.get("tip","") else 2),
                             "Kâr/Zarar (%)": round(g, 2),
                             "Stop Limit (%)": v["stop_loss"] * 100,
-                            "Kâr Alma (%)": v["tp1"] * 100
+                            "Kâr Alma (%)": v["tp1"] * 100,
+                            "Veri Kaynağı": veri_durumu
                         })
                     else:
                         tablo.append({
+                            "Tip": v.get("tip", "Hisse"),
                             "Kod": v["isim"],
                             "Maliyet (TL)": v["maliyet"],
-                            "Güncel Fiyat (TL)": "Veri Bekleniyor",
+                            "Son Fiyat (TL)": "Veri Bekleniyor",
                             "Kâr/Zarar (%)": 0,
                             "Stop Limit (%)": v["stop_loss"] * 100,
-                            "Kâr Alma (%)": v["tp1"] * 100
+                            "Kâr Alma (%)": v["tp1"] * 100,
+                            "Veri Kaynağı": "Alınamadı"
                         })
                 df = pd.DataFrame(tablo)
                 st.dataframe(df, use_container_width=True)
