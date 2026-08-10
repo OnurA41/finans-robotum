@@ -1,9 +1,9 @@
 import os
+import json
 import requests
 import yfinance as yf
 import google.generativeai as genai
 
-# Şifreleri GitHub Kasasından Otomatik Çekiyoruz
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -16,86 +16,57 @@ def mesaj_gonder(metin):
 genai.configure(api_key=GEMINI_API_KEY)
 ai_model = genai.GenerativeModel("gemini-1.5-flash")
 
-sanal_portfoyler = {
-    "1. Sanal Portföy (Hızlı Büyüme)": [
-        {"kod": "ATATP.IS", "isim": "ATATP", "maliyet": 80.0},
-        {"kod": "YEOTK.IS", "isim": "YEOTK", "maliyet": 200.0},
-        {"kod": "ARDYZ.IS", "isim": "ARDYZ", "maliyet": 45.0},
-        {"kod": "SDTTR.IS", "isim": "SDTTR", "maliyet": 280.0},
-        {"kod": "CWENE.IS", "isim": "CWENE", "maliyet": 190.0}
-    ],
-    "2. Sanal Portföy (Çekirdek Devler)": [
-        {"kod": "ASELS.IS", "isim": "ASELSN", "maliyet": 65.0},
-        {"kod": "BIMAS.IS", "isim": "BİMAS",  "maliyet": 480.0},
-        {"kod": "MPARK.IS", "isim": "MPARK",  "maliyet": 300.0},
-        {"kod": "LOGO.IS",  "isim": "LOGO",   "maliyet": 100.0},
-        {"kod": "TUPRS.IS", "isim": "TUPRS",  "maliyet": 160.0}
-    ]
-}
+# DİNAMİK PORTFÖY VERİSİNİ DOSYADAN OKU
+def portfoyleri_yukle():
+    if os.path.exists("portfoyler.json"):
+        with open("portfoyler.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
 
-analiz_verisi = "Aşağıda yatırımcının sanal portföyündeki hisselerin güncel fiyat ve temel rasyo verileri yer almaktadır:\n\n"
+sanal_portfoyler = portfoyleri_yukle()
 
-for portfoy_adi, hisseler in sanal_portfoyler.items():
-    analiz_verisi += f"--- {portfoy_adi} ---\n"
-    for h in hisseler:
-        try:
-            ticker = yf.Ticker(h["kod"])
-            fiyat = ticker.history(period="1d")["Close"].iloc[-1]
-            fk = ticker.info.get('trailingPE', 'N/A')
-            pddd = ticker.info.get('priceToBook', 'N/A')
-            getiri = ((fiyat - h["maliyet"]) / h["maliyet"]) * 100
-            analiz_verisi += f"• {h['isim']}: Fiyat: {fiyat:.2f} TL | Maliyet: {h['maliyet']} TL | Getiri: %{getiri:.1f} | F/K: {fk} | PD/DD: {pddd}\n"
-        except:
-            analiz_verisi += f"• {h['isim']}: Veri çekilemedi.\n"
+if not sanal_portfoyler or all(len(v) == 0 for v in sanal_portfoyler.values()):
+    mesaj_gonder("ℹ️ *Finans Nöbetçisi:* Şu an takip edilecek dinamik bir portföy bulunamadı. Web arayüzünden hisse/fon ekleyebilirsiniz.")
+else:
+    analiz_verisi = "Aşağıda yatırımcının oluşturduğu dinamik portföyler ve güncel veriler yer almaktadır:\n\n"
 
-istem = f"""
-Sen BIST Katılım Endeksi ve hisse senetleri konusunda uzman kıdemli bir Finansal Analist ve Yatırım Uzmanısın.
-Aşağıdaki portföy verilerini incele:
+    for portfoy_adi, varliklar in sanal_portfoyler.items():
+        if not varliklar:
+            continue
+        analiz_verisi += f"--- {portfoy_adi} ---\n"
+        for v in varliklar:
+            try:
+                ticker = yf.Ticker(v["kod"])
+                hist = ticker.history(period="5d")
+                if not hist.empty:
+                    fiyat = float(hist["Close"].iloc[-1])
+                    maliyet = v["maliyet"]
+                    getiri = ((fiyat - maliyet) / maliyet) * 100
+                    
+                    # Stop / TP Kontrolleri
+                    stop_limit = v.get("stop_loss", -0.10)
+                    tp_limit = v.get("tp1", 0.30)
+                    
+                    if (getiri / 100) <= stop_limit:
+                        mesaj_gonder(f"🚨 *STOP-LOSS UYARISI [{portfoy_adi}]*\n{v['isim']} fiyatı {fiyat:.2f} TL'ye düştü! (Getiri: %{getiri:.1f})")
+                    elif (getiri / 100) >= tp_limit:
+                        mesaj_gonder(f"🎯 *KÂR ALMA UYARISI [{portfoy_adi}]*\n{v['isim']} fiyatı {fiyat:.2f} TL'ye yükseldi! (Getiri: +%{getiri:.1f})")
 
-{analiz_verisi}
+                    analiz_verisi += f"• {v['isim']} ({v.get('tip','Hisse')}): Fiyat: {fiyat:.2f} TL | Maliyet: {maliyet} TL | Getiri: %{getiri:.1f}\n"
+            except Exception as e:
+                analiz_verisi += f"• {v['isim']}: Veri okunamadı.\n"
 
-Lütfen yatırımcıya şu 3 başlıkta kısa, net ve profesyonel bir analiz raporu sun:
-1. **Genel Portföy Değerlendirmesi:** Hangi portföy güçlü duruyor?
-2. **Değerleme/Çarpan Yorumu:** F/K ve PD/DD açısından ucuz veya primli hisseler?
-3. **Stratejik Öneri:** Portföyler arası rotasyon veya kâr realizasyonu tavsiyesi?
-"""
+    istem = f"""
+    Sen BIST Katılım Endeksi ve TEFAS Katılım Fonları konusunda uzman kıdemli bir Finansal Analist ve Yatırım Uzmanısın.
+    Aşağıdaki dinamik portföy verilerini incele:
 
-response = ai_model.generate_content(istem)
-mesaj_gonder(f"🤖 *GÜNLÜK OTOMATİK FİNANSAL ANALİST RAPORU*\n\n{response.text}")
+    {analiz_verisi}
 
-import xml.etree.ElementTree as ET
+    Lütfen yatırımcıya şu 3 başlıkta kısa, net ve profesyonel bir analiz raporu sun (Telegram formatında, bol emojili):
+    1. **Genel Portföy Değerlendirmesi:** Portföylerin genel durumu ve kârlılık seyri?
+    2. **Risk & Fırsat Analizi:** Öne çıkan veya risk teşkil eden varlıklar?
+    3. **Stratejik Tavsiye:** Portföy dengelenmesi veya Katılım prensiplerine uygun rotasyon önerileri?
+    """
 
-def kap_bilanco_kontrol():
-    # KAP'ın genel RSS bildirim akışını kontrol eder
-    kap_rss_url = "https://www.kap.org.tr/tr/rss"
-    try:
-        response = requests.get(kap_rss_url, timeout=10)
-        if response.status_code == 200:
-            root = ET.fromstring(response.content)
-            
-            # Portföyümüzdeki hisse kodları
-            takipteki_hisseler = ["ATATP", "YEOTK", "ARDYZ", "SDTTR", "CWENE", "ASELS", "BIMAS", "MPARK", "LOGO", "TUPRS"]
-            
-            for item in root.findall('.//item'):
-                baslik = item.find('title').text if item.find('title') is not None else ""
-                link = item.find('link').text if item.find('link') is not None else ""
-                
-                # Eğer bildirim takip ettiğimiz hisselerden biriyle ilgiliyse ve Finansal Rapor içeriyorsa
-                for hisse in takipteki_hisseler:
-                    if hisse in baslik and ("Finansal Rapor" in baslik or "Bilanço" in baslik):
-                        
-                        # Gemini AI'a Bilanço Yorumlatma
-                        kap_istem = f"""
-                        Aşağıdaki KAP haber başlığı takip ettiğimiz bir şirkete aittir:
-                        Başlık: {baslik}
-                        Link: {link}
-                        
-                        Bu bildirim için yatırımcıya Telegram formatında kısa, heyecan verici bir Bilanço Açıklandı Uyarısı hazırla.
-                        """
-                        ai_kap_yaniti = ai_model.generate_content(kap_istem)
-                        mesaj_gonder(f"🚨 *YENİ KAP BİLANÇO BİLDİRİMİ*\n\n{ai_kap_yaniti.text}\n\n🔗 [KAP Bildirimi Detayı]({link})")
-    except Exception as e:
-        print(f"KAP kontrolü sırasında hata: {e}")
-
-# Kodun en sonuna KAP kontrol fonksiyonunu çağırıyoruz:
-kap_bilanco_kontrol()
+    response = ai_model.generate_content(istem)
+    mesaj_gonder(f"🤖 *DİNAMİK KATILIM PORTFÖY ANALİZ RAPORU*\n\n{response.text}")
