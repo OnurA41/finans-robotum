@@ -4,10 +4,25 @@ import datetime
 import requests
 import yfinance as yf
 import google.generativeai as genai
+import logging
+import sys
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+from src.logging_config import configure_logging
+from src.config import Config, ConfigError
+from src.exceptions import APITimeoutError, DataUnavailableError
+
+configure_logging()
+logger = logging.getLogger(__name__)
+
+try:
+    config = Config()
+except ConfigError as e:
+    logger.error("Configuration error: %s", e)
+    sys.exit(1)
+
+TELEGRAM_TOKEN = config.TELEGRAM_TOKEN
+CHAT_ID = config.CHAT_ID
+GEMINI_API_KEY = config.GEMINI_API_KEY
 
 PORTFOY_DOSYASI = "portfoyler.json"
 GECMIS_DOSYASI = "gecmis.json"
@@ -16,7 +31,14 @@ GECMIS_DOSYASI = "gecmis.json"
 def mesaj_gonder(metin):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     bilgi = {"chat_id": CHAT_ID, "text": metin, "parse_mode": "Markdown"}
-    requests.post(url, data=bilgi)
+    try:
+        res = requests.post(url, data=bilgi, timeout=5)
+        if res.status_code != 200:
+            logger.warning("Telegram API returned status %s for message", res.status_code)
+    except requests.exceptions.Timeout:
+        logger.warning("Timeout while sending Telegram message")
+    except Exception as e:
+        logger.exception("Failed to send Telegram message: %s", e)
 
 
 genai.configure(api_key=GEMINI_API_KEY)
@@ -47,8 +69,8 @@ def gecmisi_yukle():
         try:
             with open(GECMIS_DOSYASI, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("Failed to load history %s: %s", GECMIS_DOSYASI, e)
     return {}
 
 
@@ -93,7 +115,11 @@ else:
                         mesaj_gonder(f"🎯 *KÂR ALMA UYARISI [{portfoy_adi}]*\n{v['isim']} fiyatı {fiyat:.2f} TL'ye yükseldi! (Getiri: +%{getiri:.1f})")
 
                     analiz_verisi += f"• {v['isim']} ({v.get('tip','Hisse')}) x{miktar_v}: Fiyat: {fiyat:.2f} TL | Maliyet: {maliyet} TL | Getiri: %{getiri:.1f}\n"
-            except Exception:
+            except requests.exceptions.Timeout:
+                logger.warning("Timeout while fetching data for %s", v.get('isim'))
+                analiz_verisi += f"• {v['isim']}: Veri okunamadı (timeout).\n"
+            except Exception as e:
+                logger.exception("Error fetching data for %s: %s", v.get('isim', 'unknown'), e)
                 analiz_verisi += f"• {v['isim']}: Veri okunamadı.\n"
 
         # Bugünün toplam portföy değerini geçmişe kaydet (raporlama için gerekli)
@@ -116,5 +142,9 @@ Lütfen yatırımcıya şu 3 başlıkta kısa, net ve profesyonel bir analiz rap
 
 Not: Bu sanal bir portföydür, gerçek para ile işlem yapılmamaktadır. Önerilerini bu bağlamda, kesin talimat değil değerlendirme olarak sun.
 """
-    response = ai_model.generate_content(istem)
-    mesaj_gonder(f"🤖 *DİNAMİK KATILIM PORTFÖY ANALİZ RAPORU*\n\n{response.text}")
+    try:
+        response = ai_model.generate_content(istem)
+        mesaj_gonder(f"🤖 *DİNAMİK KATILIM PORTFÖY ANALİZ RAPORU*\n\n{response.text}")
+    except Exception as e:
+        logger.exception("AI generation failed: %s", e)
+        mesaj_gonder("🤖 *DİNAMİK KATILIM PORTFÖY ANALİZ RAPORU*")

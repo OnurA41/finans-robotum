@@ -4,6 +4,12 @@ import pandas as pd
 import json
 import os
 import requests
+import logging
+
+from src.logging_config import configure_logging
+
+configure_logging()
+logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Katılım Finans Yönetimi", page_icon="🕌", layout="wide")
 st.title("🕌 Katılım Portföy & Canlı Fiyat Takip Merkezi")
@@ -51,8 +57,8 @@ def portfoyleri_yukle():
                             v.setdefault("miktar", 1)
                         donusmus[ad] = icerik
                 return donusmus
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception("Failed to load portfolios from %s: %s", JSON_DOSYASI, e)
     return {"Ana Katılım Portföyü": bos_portfoy()}
 
 
@@ -80,8 +86,8 @@ def bist_fiyati_getir(hisse_kodu):
         hist5 = t.history(period="5d")
         if not hist5.empty and 'Close' in hist5.columns:
             return float(hist5['Close'].iloc[-1])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.exception("Error fetching BIST price for %s: %s", hisse_kodu, e)
     return None
 
 
@@ -100,8 +106,10 @@ def tefas_fon_fiyati_getir(fon_kodu):
             if "data" in data and len(data["data"]) > 0:
                 son_fiyat = data["data"][0]["BİRİM FİYAT"]
                 return float(str(son_fiyat).replace(",", "."))
-    except Exception:
-        pass
+        else:
+            logger.warning("TEFAS returned status %s for %s", res.status_code, fon_kodu)
+    except Exception as e:
+        logger.exception("Error fetching TEFAS price for %s: %s", fon_kodu, e)
     return None
 
 
@@ -219,7 +227,7 @@ if portfoyler:
                             "Maliyet (TL)": v["maliyet"], "Son Fiyat (TL)": "Veri Bekleniyor",
                             "Değer (TL)": "—", "Kâr/Zarar (%)": 0,
                             "Stop Limit (%)": v["stop_loss"] * 100, "Kâr Alma (%)": v["tp1"] * 100,
-                            "Veri Kaynağı": "Alınamadı"
+                            "Veri Kaynağı": "Al��namadı"
                         })
 
                 m1, m2 = st.columns(2)
