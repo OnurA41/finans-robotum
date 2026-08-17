@@ -27,6 +27,18 @@ GEMINI_API_KEY = config.GEMINI_API_KEY
 PORTFOY_DOSYASI = "portfoyler.json"
 GECMIS_DOSYASI = "gecmis.json"
 
+# Configure Gemini AI client only if API key is provided
+ai_model = None
+if GEMINI_API_KEY:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        ai_model = genai.GenerativeModel("gemini-1.5-flash")
+    except Exception as e:
+        logger.warning("Gemini AI configuration failed; AI features will be disabled")
+        logger.debug("Gemini configuration error: %s", e)
+else:
+    logger.info("GEMINI_API_KEY not set; AI features disabled")
+
 
 def mesaj_gonder(metin):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -40,9 +52,6 @@ def mesaj_gonder(metin):
     except Exception as e:
         logger.exception("Failed to send Telegram message: %s", e)
 
-
-genai.configure(api_key=GEMINI_API_KEY)
-ai_model = genai.GenerativeModel("gemini-1.5-flash")
 
 
 def portfoyleri_yukle():
@@ -143,8 +152,12 @@ Lütfen yatırımcıya şu 3 başlıkta kısa, net ve profesyonel bir analiz rap
 Not: Bu sanal bir portföydür, gerçek para ile işlem yapılmamaktadır. Önerilerini bu bağlamda, kesin talimat değil değerlendirme olarak sun.
 """
     try:
-        response = ai_model.generate_content(istem)
-        mesaj_gonder(f"🤖 *DİNAMİK KATILIM PORTFÖY ANALİZ RAPORU*\n\n{response.text}")
+        if ai_model is not None:
+            response = ai_model.generate_content(istem)
+            mesaj_gonder(f"🤖 *DİNAMİK KATILIM PORTFÖY ANALİZ RAPORU*\n\n{response.text}")
+        else:
+            logger.info("Skipping AI generation because GEMINI_API_KEY is not configured")
+            mesaj_gonder("🤖 *DİNAMİK KATILIM PORTFÖY ANALİZ RAPORU*")
     except Exception as e:
         logger.exception("AI generation failed: %s", e)
         mesaj_gonder("🤖 *DİNAMİK KATILIM PORTFÖY ANALİZ RAPORU*")
