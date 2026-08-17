@@ -1,0 +1,39 @@
+name: Günlük Katılım Portföy Kontrolü
+
+on:
+  schedule:
+    - cron: '30 15 * * 1-5'   # Hafta içi her gün, Türkiye saatiyle 18:30 (borsa kapanışından sonra)
+  workflow_dispatch: {}        # "Actions" sekmesinden elle de çalıştırabilmek için
+
+permissions:
+  contents: write
+
+jobs:
+  calistir:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodu indir
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Gerekli paketleri yükle
+        run: pip install -r requirements.txt
+
+      - name: Botu çalıştır
+        run: python main.py
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      - name: Güncellenen verileri GitHub'a geri kaydet
+        run: |
+          git config user.name "finans-robotum-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add portfoyler.json gecmis.json
+          git diff --cached --quiet || git commit -m "Günlük otomatik güncelleme"
+          git push
